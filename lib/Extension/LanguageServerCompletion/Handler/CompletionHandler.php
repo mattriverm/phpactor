@@ -45,8 +45,7 @@ class CompletionHandler implements Handler, CanRegisterCapabilities
         private TypedCompletorRegistry $registry,
         private SuggestionNameFormatter $suggestionNameFormatter,
         private NameImporter $nameImporter,
-        private bool $supportSnippets,
-        private bool $provideTextEdit = false
+        private bool $supportSnippets
     ) {
     }
 
@@ -97,12 +96,12 @@ class CompletionHandler implements Handler, CanRegisterCapabilities
                     'kind' => PhpactorToLspCompletionType::fromPhpactorType($suggestion->type()),
                     'insertText' => $insertText,
                     'sortText' => $this->sortText($suggestion),
-                    'textEdit' => $this->textEdit($suggestion, $insertText, $textDocument),
+                    'textEdit' => $this->textEdit($suggestion, $insertText, $textDocument, $byteOffset->toInt()),
                     'additionalTextEdits' => $textEdits,
                     'insertTextFormat' => $insertTextFormat,
                     'data' => $index,
                 ]);
-
+                
                 $this->resolve[$index] = function (CompletionItem $item) use ($suggestion): CompletionItem {
                     $documentation = $suggestion->documentation();
                     $item->documentation = $documentation ? new MarkupContent(MarkupKind::MARKDOWN, $documentation) : null;
@@ -225,22 +224,41 @@ class CompletionHandler implements Handler, CanRegisterCapabilities
     private function textEdit(
         Suggestion $suggestion,
         string $insertText,
-        TextDocumentItem $textDocument
+        TextDocumentItem $textDocument,
+        ?int $offset = null
     ): ?TextEdit {
-        if (false === $this->provideTextEdit) {
-            return null;
-        }
-
         $range = $suggestion->range();
+        $lspRange = null;
 
-        if (!$range) {
+        if ($range) {
+            $lspRange = new Range(
+                PositionConverter::byteOffsetToPosition($range->start(), $textDocument->text),
+                PositionConverter::byteOffsetToPosition($range->end(), $textDocument->text)
+            );
+        } elseif (null !== $offset) {
+            $text = $textDocument->text;
+            $start = $offset;
+            while ($start > 0 && preg_match('/[a-zA-Z0-9_\$@]/', $text[$start - 1])) {
+                $start--;
+            }
+            $end = $offset;
+            while ($end < strlen($text) && preg_match('/[a-zA-Z0-9_\$@]/', $text[$end])) {
+                $end++;
+            }
+            if ($start !== $end) {
+                $lspRange = new Range(
+                    PositionConverter::intByteOffsetToPosition($start, $text),
+                    PositionConverter::intByteOffsetToPosition($end, $text)
+                );
+            }
+        }
+
+        if (!$lspRange) {
             return null;
         }
+
         return new TextEdit(
-            new Range(
-                PositionConverter::byteOffsetToPosition($range->start(), $textDocument->text),
-                PositionConverter::byteOffsetToPosition($range->end(), $textDocument->text),
-            ),
+            $lspRange,
             $insertText
         );
     }
